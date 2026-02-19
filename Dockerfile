@@ -13,9 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copia solo los requirements primero para aprovechar el cache de Docker:
-# si el código cambia pero los requirements no, Docker no reinstala paquetes
-COPY requirements/local.txt requirements/local.txt
+# Copia toda la carpeta requirements primero para aprovechar el cache de Docker:
+# si el código cambia pero los requirements no, Docker no reinstala paquetes.
+# Necesitamos todos los archivos porque local.txt hace -r base.txt
+COPY requirements/ requirements/
 RUN pip install --no-cache-dir -r requirements/local.txt
 
 # Copia el resto del código
