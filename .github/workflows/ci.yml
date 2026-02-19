@@ -1,0 +1,96 @@
+# ============================================================
+# Workflow de CI — Integración Continua
+# ============================================================
+# Se ejecuta en cada push o Pull Request hacia main o develop.
+# Si algún paso falla, el workflow falla y bloquea el merge
+# (cuando la protección de ramas está configurada en GitHub).
+# ============================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    name: Linting y pruebas
+    runs-on: ubuntu-latest
+
+    # GitHub Actions puede levantar servicios Docker junto al runner.
+    # Usamos esto en lugar de docker-compose: es más rápido porque
+    # no necesitamos construir nuestra propia imagen para correr los tests.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: todos_db
+          POSTGRES_USER: todos_user
+          POSTGRES_PASSWORD: todos_password
+        ports:
+          - 5432:5432
+        # El runner espera a que postgres esté listo antes de continuar
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # Variables de entorno disponibles en todos los pasos del job.
+    # Estas reemplazan al archivo .env que usamos en local.
+    # Nota: SECRET_KEY aquí es solo para CI — no es un secret real.
+    # Los secrets reales van en GitHub Settings → Secrets (Fase 4).
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.local
+      SECRET_KEY: ci-secret-key-only-for-testing-not-real
+      POSTGRES_DB: todos_db
+      POSTGRES_USER: todos_user
+      POSTGRES_PASSWORD: todos_password
+      # En el runner, el servicio postgres es accesible en localhost,
+      # no en "db" como en docker-compose.
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+
+    steps:
+      # 1. Descargar el código del repositorio al runner
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # 2. Instalar Python con cache de pip para acelerar ejecuciones futuras.
+      #    El cache se invalida automáticamente si cambia local.txt.
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements/local.txt
+
+      # 3. psycopg2 necesita libpq-dev para compilarse en Linux
+      - name: Instalar dependencias del sistema
+        run: sudo apt-get install -y libpq-dev
+
+      # 4. Instalar dependencias Python (Django, DRF, ruff, etc.)
+      - name: Instalar dependencias Python
+        run: pip install -r requirements/local.txt
+
+      # 5. Linting: ruff revisa errores de sintaxis y estilo.
+      #    Si hay un error real (no solo estilo), el CI falla aquí
+      #    antes de perder tiempo corriendo los tests.
+      - name: Linting con ruff
+        run: ruff check .
+
+      # 6. Verificar que todos los modelos tienen su migración generada.
+      #    Si alguien modifica un modelo pero olvida hacer makemigrations,
+      #    este paso falla y avisa antes de llegar a producción.
+      - name: Verificar migraciones pendientes
+        run: python manage.py makemigrations --check --dry-run
+
+      # 7. Aplicar las migraciones a la base de datos de CI
+      - name: Aplicar migraciones
+        run: python manage.py migrate
+
+      # 8. Correr los tests con salida detallada
+      - name: Correr pruebas
+        run: python manage.py test apps.todos --verbosity=2

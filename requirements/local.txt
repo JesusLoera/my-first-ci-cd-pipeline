@@ -1,1 +1,4 @@
 -r base.txt
+
+# Herramientas de desarrollo (no se instalan en producción)
+ruff==0.9.9
