@@ -10,13 +10,30 @@ DEBUG = False
 #                a los dominios legítimos y rechace requests con Host header falso
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", cast=Csv())
 
+# --- WhiteNoise: archivos estáticos sin Nginx separado ---
+# WhiteNoise debe ir justo después de SecurityMiddleware para interceptar
+# los requests de archivos estáticos antes que cualquier otro middleware.
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+# Comprime y cachea los archivos estáticos automáticamente
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
 # --- Seguridad HTTPS ---
 # Ninguna de estas opciones existe en base.py ni local.py porque en local
 # no corremos HTTPS. Se activan solo en producción donde sí hay un certificado.
 
+# TODO: activar cuando HTTPS esté configurado con Certbot/Let's Encrypt
 # Redirige automáticamente cualquier request HTTP → HTTPS a nivel Django.
-# En producción esto lo suele hacer nginx, pero tenerlo en Django es una capa extra.
-SECURE_SSL_REDIRECT = True
+SECURE_SSL_REDIRECT = False
 
 # Le dice al browser que la cookie de sesión solo se envíe en conexiones HTTPS.
 # Sin esto, la cookie podría viajar en texto plano por una conexión HTTP accidental.
