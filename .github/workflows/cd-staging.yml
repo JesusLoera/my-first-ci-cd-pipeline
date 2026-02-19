@@ -1,0 +1,81 @@
+# ============================================================
+# Workflow de CD — Deploy automático a Staging
+# ============================================================
+# Se dispara cuando se hace merge a develop (push directo o PR).
+# Construye la imagen Docker, la sube al DOCR y despliega en
+# el Droplet de staging vía SSH.
+# ============================================================
+
+name: CD — Staging
+
+on:
+  push:
+    branches: [develop]
+
+jobs:
+  build-and-deploy:
+    name: Build, push y deploy a staging
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # Autenticar en DOCR para poder hacer push de la imagen.
+      # En DigitalOcean Container Registry, el token se usa tanto
+      # como username como password.
+      - name: Login al DigitalOcean Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.digitalocean.com
+          username: ${{ secrets.DOCR_TOKEN }}
+          password: ${{ secrets.DOCR_TOKEN }}
+
+      # Construir la imagen y subirla con dos tags:
+      # - staging-latest: siempre apunta a la última versión de staging
+      # - staging-<sha>: tag inmutable por si se necesita hacer rollback
+      - name: Build y push de imagen Docker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/todos:staging-latest
+            registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/todos:staging-${{ github.sha }}
+
+      # Copiar docker-compose.prod.yml al servidor para asegurar que
+      # siempre tiene la versión más reciente del archivo de configuración.
+      - name: Copiar docker-compose.prod.yml al servidor
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: docker-compose.prod.yml
+          target: /opt/todos/
+
+      # SSH al droplet para bajar la nueva imagen y reiniciar el contenedor.
+      # Las variables de entorno de la DB y Django se pasan como env
+      # para que el contenedor las tenga disponibles en tiempo de ejecución.
+      - name: Deploy en staging
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Autenticar Docker en el registry
+            echo "${{ secrets.DOCR_TOKEN }}" | docker login registry.digitalocean.com \
+              -u "${{ secrets.DOCR_TOKEN }}" --password-stdin
+
+            # Bajar la nueva imagen
+            docker pull registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/todos:staging-latest
+
+            # Actualizar las variables de entorno dinámicas y reiniciar
+            cd /opt/todos
+            DOCR_REGISTRY=${{ secrets.DOCR_REGISTRY }} \
+            TAG=staging-latest \
+            docker compose -f docker-compose.prod.yml up -d
+
+            # Limpiar imágenes viejas para liberar espacio en disco
+            docker image prune -f

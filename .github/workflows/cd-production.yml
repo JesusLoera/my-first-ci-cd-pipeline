@@ -1,0 +1,67 @@
+# ============================================================
+# Workflow de CD — Deploy automático a Producción
+# ============================================================
+# Se dispara cuando se hace merge a main (siempre vía PR desde develop).
+# Mismo flujo que staging pero apunta al Droplet de producción
+# y usa la base de datos de producción.
+# ============================================================
+
+name: CD — Producción
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    name: Build, push y deploy a producción
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Login al DigitalOcean Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.digitalocean.com
+          username: ${{ secrets.DOCR_TOKEN }}
+          password: ${{ secrets.DOCR_TOKEN }}
+
+      # Tag "latest" para producción + tag inmutable con SHA para rollback
+      - name: Build y push de imagen Docker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/todos:latest
+            registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/todos:${{ github.sha }}
+
+      - name: Copiar docker-compose.prod.yml al servidor
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: docker-compose.prod.yml
+          target: /opt/todos/
+
+      - name: Deploy en producción
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "${{ secrets.DOCR_TOKEN }}" | docker login registry.digitalocean.com \
+              -u "${{ secrets.DOCR_TOKEN }}" --password-stdin
+
+            docker pull registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/todos:latest
+
+            cd /opt/todos
+            DOCR_REGISTRY=${{ secrets.DOCR_REGISTRY }} \
+            TAG=latest \
+            docker compose -f docker-compose.prod.yml up -d
+
+            docker image prune -f
