@@ -1,4 +1,4 @@
-# my-first-ci-cd-pipeline
+# ci-cd-pipeline-digitalocean
 
 API REST de Todos construida con Django como vehículo para aprender e implementar un pipeline de CI/CD completo con GitHub Actions y DigitalOcean.
 
